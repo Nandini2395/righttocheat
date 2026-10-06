@@ -53,6 +53,7 @@ frontend/               React app
       Controls.tsx             Start/Stop/Flip/Capture/Pause/Auto-scan controls
       ResultsPanel.tsx         Detected question, answer, explanation, verification, sources
       HistoryPanel.tsx         Slide-over history list with clear
+      SetupBanner.tsx          Flags a missing API key / unreachable backend up front
       StatusBar.tsx             Bottom status line
     api/client.ts              Typed fetch wrapper around the backend API
 ```

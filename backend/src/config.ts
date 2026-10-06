@@ -2,11 +2,6 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-function bool(v: string | undefined, fallback: boolean): boolean {
-  if (v === undefined) return fallback;
-  return v === "true" || v === "1";
-}
-
 // Vercel injects the current deployment URL and the stable production URL. Allowing them
 // automatically means preview deployments (whose hostname changes every time) work without
 // anyone editing CORS_ORIGIN by hand.

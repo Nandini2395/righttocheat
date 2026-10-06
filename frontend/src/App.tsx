@@ -6,8 +6,16 @@ import Controls from "./components/Controls";
 import ResultsPanel from "./components/ResultsPanel";
 import StatusBar from "./components/StatusBar";
 import HistoryPanel from "./components/HistoryPanel";
-import { clearHistoryApi, fetchHistory } from "./api/client";
+import SetupBanner from "./components/SetupBanner";
+import { checkHealth, clearHistoryApi, fetchHistory } from "./api/client";
 import { HistoryEntry } from "./types";
+
+interface HealthState {
+  reachable: boolean;
+  llmConfigured: boolean;
+  searchConfigured: boolean;
+  provider: string;
+}
 
 export default function App() {
   const { videoRef, status: cameraStatus, error: cameraError, start, stop, flip } = useCamera();
@@ -26,6 +34,23 @@ export default function App() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [health, setHealth] = useState<HealthState | null>(null);
+  const [bannerDismissed, setBannerDismissed] = useState(false);
+
+  useEffect(() => {
+    checkHealth()
+      .then((h) =>
+        setHealth({
+          reachable: true,
+          llmConfigured: h.llmConfigured,
+          searchConfigured: h.searchConfigured,
+          provider: h.llmProvider,
+        })
+      )
+      .catch(() =>
+        setHealth({ reachable: false, llmConfigured: false, searchConfigured: false, provider: "" })
+      );
+  }, []);
 
   useEffect(() => {
     if (result?.status === "ok" && historyOpen) {
@@ -75,8 +100,21 @@ export default function App() {
         </button>
       </header>
 
+      {health && !bannerDismissed && (
+        <SetupBanner
+          reachable={health.reachable}
+          llmConfigured={health.llmConfigured}
+          searchConfigured={health.searchConfigured}
+          provider={health.provider}
+          onDismiss={() => setBannerDismissed(true)}
+        />
+      )}
+
       <main className="flex flex-1 flex-col overflow-hidden md:flex-row">
-        <section className="flex flex-1 flex-col border-b border-slate-800 md:border-b-0 md:border-r">
+        {/* On phones the two panes split the screen (camera 3/5, results 2/5) so an answer is
+            actually readable; on desktop the camera grows and the results keep a fixed column.
+            min-h-0 lets the results panel scroll inside its pane instead of stretching it. */}
+        <section className="flex min-h-0 flex-[3] flex-col border-b border-slate-800 md:flex-1 md:border-b-0 md:border-r">
           <CameraView videoRef={videoRef} cameraStatus={cameraStatus} scanState={scanState} />
           <Controls
             cameraStatus={cameraStatus}
@@ -92,7 +130,7 @@ export default function App() {
           />
         </section>
 
-        <aside className="flex w-full flex-col md:w-[420px] md:min-w-[360px]">
+        <aside className="flex min-h-0 w-full flex-[2] flex-col md:w-[420px] md:min-w-[360px] md:flex-none">
           <ResultsPanel scanState={scanState} result={result} />
         </aside>
       </main>
