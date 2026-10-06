@@ -7,17 +7,27 @@ function bool(v: string | undefined, fallback: boolean): boolean {
   return v === "true" || v === "1";
 }
 
+// Vercel injects the current deployment URL and the stable production URL. Allowing them
+// automatically means preview deployments (whose hostname changes every time) work without
+// anyone editing CORS_ORIGIN by hand.
+const vercelOrigins = [process.env.VERCEL_URL, process.env.VERCEL_PROJECT_PRODUCTION_URL]
+  .filter((host): host is string => Boolean(host))
+  .map((host) => `https://${host}`);
+
 export const config = {
   // API_PORT takes priority so this never collides with a frontend dev server's own
   // PORT env var when both are launched from the same parent process/shell locally.
   // Falls back to PORT because most Node hosts (Render, Railway, Heroku-style) inject
   // PORT themselves and expect the app to bind to it.
   port: Number(process.env.API_PORT || process.env.PORT || 8787),
-  // Comma-separated list, e.g. "http://localhost:5173,https://you.github.io"
-  corsOrigins: (process.env.CORS_ORIGIN || "http://localhost:5173")
-    .split(",")
-    .map((o) => o.trim())
-    .filter(Boolean),
+  // Comma-separated list, e.g. "http://localhost:5173,https://you.vercel.app"
+  corsOrigins: [
+    ...(process.env.CORS_ORIGIN || "http://localhost:5173")
+      .split(",")
+      .map((o) => o.trim())
+      .filter(Boolean),
+    ...vercelOrigins,
+  ],
 
   llmProvider: (process.env.LLM_PROVIDER || "google") as "anthropic" | "openai" | "google",
 

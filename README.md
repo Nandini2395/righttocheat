@@ -28,12 +28,11 @@ talks to your own backend.
 ## Project layout
 
 ```
-api/
-  index.ts              Vercel serverless entrypoint (exports the Express app)
-backend/                Express API
+vercel.json             Declares the frontend + backend services and /api routing
+backend/                Express API (deploys as the "backend" service)
   src/
-    app.ts              Builds the Express app (shared by local server + Vercel function)
-    index.ts            Local dev server — binds a port and starts app.ts
+    app.ts              Builds the Express app (routes, CORS, rate limiting)
+    index.ts            Entrypoint — binds PORT (injected by Vercel in production)
     config.ts            Env var loading/validation
     routes/analyze.ts     POST /api/analyze — the full pipeline
     routes/history.ts     GET/DELETE /api/history
@@ -126,18 +125,27 @@ question.
 
 ## Deploying to Vercel (and using it on your phone)
 
-The whole app deploys as **one Vercel project**: the Vite frontend as static files, and the same
-Express app as a serverless function at `/api`. Because both live on one domain, there's no CORS
-setup and no API URL to configure — the frontend just calls `/api/...` on its own origin. Vercel
-serves it over HTTPS, which is what mobile browsers require before granting camera access.
+The whole app deploys as **one Vercel project with two services**: `frontend` (Vite static build)
+and `backend` (the Express API). [`vercel.json`](vercel.json) declares both and rewrites `/api/*` to
+the backend while everything else goes to the frontend — so both live on a single domain. That means
+no CORS setup and no API URL to configure: the frontend just calls `/api/...` on its own origin.
+Vercel serves it over HTTPS, which is what mobile browsers require before granting camera access.
 
-How the pieces map:
+```jsonc
+// vercel.json — one project, two services, one domain
+"services": {
+  "backend":  { "root": "backend",  "framework": "express" },
+  "frontend": { "root": "frontend", "framework": "vite" }
+},
+"rewrites": [
+  { "source": "/api/(.*)", "destination": { "service": "backend" } },
+  { "source": "/(.*)",     "destination": { "service": "frontend" } }
+]
+```
 
-| File | Role |
-| --- | --- |
-| [`vercel.json`](vercel.json) | Build command, output dir (`frontend/dist`), and 60s function timeout |
-| [`api/index.ts`](api/index.ts) | Serverless entrypoint — exports the Express app from `backend/src/app.ts` |
-| [`backend/src/app.ts`](backend/src/app.ts) | Builds the app without binding a port (shared by local dev and Vercel) |
+The backend binds whatever `PORT` Vercel injects (see `port` in
+[`backend/src/config.ts`](backend/src/config.ts)), and `CORS_ORIGIN` needs no production value —
+same-origin requests are allowed automatically, as are Vercel's own deployment URLs.
 
 ### 1. Push the repo to GitHub
 
@@ -145,9 +153,12 @@ Vercel deploys from a Git repo. Make sure your latest commit is pushed.
 
 ### 2. Import the project on Vercel
 
-[vercel.com/new](https://vercel.com/new) → **Import** your repository. Leave every build setting at
-its default — `vercel.json` already specifies them. Don't set a Root Directory; it must stay at the
-repo root so the `api/` folder is detected.
+[vercel.com/new](https://vercel.com/new) → **Import** your repository.
+
+Vercel detects `backend/` and `frontend/` as two applications and selects the **Services** preset —
+that's correct, keep it. Leave **Root Directory** as `./` and don't use the "Import single project"
+buttons next to the individual folders: those would deploy only one half (a frontend-only deploy
+returns 404s for every `/api` call). `vercel.json` already declares both services and their routing.
 
 ### 3. Add your API key as an environment variable
 
@@ -160,7 +171,7 @@ In the import screen (or later under **Settings → Environment Variables**) add
 Optional: `GOOGLE_SEARCH_API_KEY` + `GOOGLE_SEARCH_ENGINE_ID` to enable search cross-verification,
 and `LLM_PROVIDER`/`GEMINI_VISION_MODEL` to switch provider or model without a code change.
 
-These stay server-side — they're only ever read by the serverless function, never shipped to the
+These stay server-side — they're only ever read by the backend service, never shipped to the
 browser. **Do not** prefix them with `VITE_`, which would expose them publicly.
 
 ### 4. Deploy, then make it reachable

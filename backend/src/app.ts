@@ -18,14 +18,25 @@ export function createApp() {
   // Required when running behind Vercel's proxy so rate limiting sees the real client IP.
   app.set("trust proxy", 1);
 
+  // Browsers DO send an Origin header on same-origin POSTs, so a single-domain deploy
+  // (frontend and API behind one host, as on Vercel) must treat same-origin as allowed —
+  // otherwise the app blocks its own requests. Cross-origin callers still need to be
+  // listed in CORS_ORIGIN. A rejected origin simply gets no CORS headers (the browser
+  // then blocks it) rather than erroring the request into a 500.
   app.use(
-    cors({
-      origin: (origin, callback) => {
-        // Same-origin deploys (Vercel) send no Origin header for same-site requests, and
-        // a split frontend/backend deploy must list its frontend origin in CORS_ORIGIN.
-        if (!origin || config.corsOrigins.includes(origin)) callback(null, true);
-        else callback(new Error(`Origin ${origin} is not allowed by CORS_ORIGIN`));
-      },
+    cors((req, callback) => {
+      const origin = req.headers.origin;
+      if (!origin) return callback(null, { origin: true });
+
+      let isSameOrigin = false;
+      try {
+        isSameOrigin = Boolean(req.headers.host) && new URL(origin).host === req.headers.host;
+      } catch {
+        isSameOrigin = false;
+      }
+
+      const allowed = isSameOrigin || config.corsOrigins.includes(origin);
+      callback(null, { origin: allowed });
     })
   );
   app.use(express.json({ limit: "12mb" })); // camera frames as base64 can be a few MB
