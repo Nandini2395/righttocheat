@@ -1,6 +1,8 @@
 import express from "express";
 import cors from "cors";
+import fs from "fs";
 import morgan from "morgan";
+import path from "path";
 import rateLimit from "express-rate-limit";
 import { config, isSearchConfigured } from "./config";
 import { errorHandler } from "./middleware/errorHandler";
@@ -8,9 +10,8 @@ import analyzeRouter from "./routes/analyze";
 import historyRouter from "./routes/history";
 
 /**
- * Builds the Express app without binding a port, so it can be used both by the local
- * dev server (index.ts) and by the Vercel serverless entrypoint (/api/index.ts), where
- * the platform owns the listener.
+ * Builds the Express app without binding a port, so the same app serves local dev, a
+ * single-process deployment, and Vercel's backend service.
  */
 export function createApp() {
   const app = express();
@@ -61,7 +62,27 @@ export function createApp() {
   app.use("/api/analyze", analyzeLimiter, analyzeRouter);
   app.use("/api/history", historyRouter);
 
+  serveBuiltFrontend(app);
+
   app.use(errorHandler);
 
   return app;
+}
+
+/**
+ * When a production build of the frontend exists next to the backend, serve it from this
+ * same process. That makes the whole app a single origin on one port — which is what lets it
+ * be exposed through one HTTPS tunnel or run on any plain Node host, with no separate static
+ * host and no CORS. On Vercel the frontend is its own service, so this directory won't exist
+ * and the block is skipped.
+ */
+function serveBuiltFrontend(app: express.Express) {
+  const distDir = path.resolve(__dirname, "..", "..", "frontend", "dist");
+  if (!fs.existsSync(path.join(distDir, "index.html"))) return;
+
+  app.use(express.static(distDir));
+  app.get("*", (req, res, next) => {
+    if (req.path.startsWith("/api/")) return next();
+    res.sendFile(path.join(distDir, "index.html"));
+  });
 }

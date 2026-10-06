@@ -134,7 +134,27 @@ question.
 > frontend from another device on your network (e.g. testing on a phone), you'll need HTTPS or a
 > tunnel (e.g. `ngrok`), since browsers block camera access on plain `http://` for non-localhost hosts.
 
-## Deploying to Vercel (and using it on your phone)
+## Quickest way onto your phone (no account needed)
+
+The backend serves the built frontend when one exists, so the whole app runs as a single server on
+one port. Expose that port over HTTPS — which phone browsers require before allowing camera access —
+and you're done:
+
+```bash
+npm run serve
+```
+
+Then, in a second terminal:
+
+```bash
+npx cloudflared tunnel --url http://localhost:8787
+```
+
+That prints a `https://<random>.trycloudflare.com` URL. Open it on your phone, tap **Start Camera**,
+tap **Allow**. The tunnel stays up as long as both commands are running, and the URL changes each
+time you restart it. This needs no Vercel/Render account and no API key.
+
+## Deploying to Vercel (for a permanent URL)
 
 The whole app deploys as **one Vercel project with two services**: `frontend` (Vite static build)
 and `backend` (the Express API). [`vercel.json`](vercel.json) declares both and rewrites `/api/*` to

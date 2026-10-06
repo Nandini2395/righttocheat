@@ -11,6 +11,8 @@
     "dev:backend": "npm run dev -w backend",
     "dev:frontend": "npm run dev -w frontend",
     "build": "npm run build -w backend && npm run build -w frontend",
+    "start": "node backend/dist/index.js",
+    "serve": "npm run build && node backend/dist/index.js",
     "install:all": "npm install"
   },
   "devDependencies": {
