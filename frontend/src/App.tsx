@@ -12,9 +12,7 @@ import { HistoryEntry } from "./types";
 
 interface HealthState {
   reachable: boolean;
-  llmConfigured: boolean;
   searchConfigured: boolean;
-  provider: string;
 }
 
 export default function App() {
@@ -28,6 +26,7 @@ export default function App() {
     manualCapture,
     result,
     errorMessage,
+    ocrProgress,
     reset,
   } = useScanner(videoRef, cameraStatus === "active");
 
@@ -39,17 +38,8 @@ export default function App() {
 
   useEffect(() => {
     checkHealth()
-      .then((h) =>
-        setHealth({
-          reachable: true,
-          llmConfigured: h.llmConfigured,
-          searchConfigured: h.searchConfigured,
-          provider: h.llmProvider,
-        })
-      )
-      .catch(() =>
-        setHealth({ reachable: false, llmConfigured: false, searchConfigured: false, provider: "" })
-      );
+      .then((h) => setHealth({ reachable: true, searchConfigured: h.searchConfigured }))
+      .catch(() => setHealth({ reachable: false, searchConfigured: false }));
   }, []);
 
   useEffect(() => {
@@ -103,9 +93,7 @@ export default function App() {
       {health && !bannerDismissed && (
         <SetupBanner
           reachable={health.reachable}
-          llmConfigured={health.llmConfigured}
           searchConfigured={health.searchConfigured}
-          provider={health.provider}
           onDismiss={() => setBannerDismissed(true)}
         />
       )}
@@ -126,7 +114,7 @@ export default function App() {
             onManualCapture={manualCapture}
             autoScan={autoScan}
             onToggleAutoScan={() => setAutoScan((v) => !v)}
-            processing={scanState === "processing" || scanState === "detected"}
+            processing={scanState === "processing" || scanState === "detected" || scanState === "reading"}
           />
         </section>
 
@@ -135,7 +123,12 @@ export default function App() {
         </aside>
       </main>
 
-      <StatusBar state={scanState} errorMessage={errorMessage} cameraError={cameraError} />
+      <StatusBar
+        state={scanState}
+        errorMessage={errorMessage}
+        cameraError={cameraError}
+        ocrProgress={ocrProgress}
+      />
 
       <HistoryPanel
         open={historyOpen}

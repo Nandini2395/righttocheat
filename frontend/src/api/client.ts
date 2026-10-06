@@ -20,11 +20,12 @@ async function handleJson<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export async function analyzeFrame(imageDataUrl: string): Promise<AnalyzeResponseBody> {
+// OCR runs in the browser, so only recognized text crosses the network — no image upload.
+export async function analyzeText(text: string, ocrConfidence: number): Promise<AnalyzeResponseBody> {
   const res = await fetch(`${API_BASE_URL}/api/analyze`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ image: imageDataUrl }),
+    body: JSON.stringify({ text, ocrConfidence }),
   });
   return handleJson<AnalyzeResponseBody>(res);
 }
@@ -40,7 +41,7 @@ export async function clearHistoryApi(): Promise<void> {
   await handleJson(res);
 }
 
-export async function checkHealth(): Promise<{ ok: boolean; llmConfigured: boolean; searchConfigured: boolean; llmProvider: string }> {
+export async function checkHealth(): Promise<{ ok: boolean; searchConfigured: boolean; searchProvider: string }> {
   const res = await fetch(`${API_BASE_URL}/api/health`);
   return handleJson(res);
 }

@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import morgan from "morgan";
 import rateLimit from "express-rate-limit";
-import { config, assertLlmConfigured, isSearchConfigured } from "./config";
+import { config, isSearchConfigured } from "./config";
 import { errorHandler } from "./middleware/errorHandler";
 import analyzeRouter from "./routes/analyze";
 import historyRouter from "./routes/history";
@@ -53,8 +53,7 @@ export function createApp() {
   app.get("/api/health", (_req, res) => {
     res.json({
       ok: true,
-      llmProvider: config.llmProvider,
-      llmConfigured: assertLlmConfigured() === null,
+      searchProvider: isSearchConfigured() ? "google" : "duckduckgo+wikipedia",
       searchConfigured: isSearchConfigured(),
     });
   });

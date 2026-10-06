@@ -4,8 +4,9 @@ const MESSAGES: Record<ScanState, string> = {
   idle: "Start the camera to begin scanning.",
   watching: "Watching for a question — point the camera at one.",
   detected: "Frame captured, checking sharpness...",
-  processing: "Processing: extracting question, generating answer, verifying with search...",
-  answered: "Question answered and cross-verified.",
+  reading: "Reading the text in the image...",
+  processing: "Searching the web and matching an answer...",
+  answered: "Answer found from search results.",
   needs_reposition: "Reposition the camera for a clearer view of the question.",
   no_question: "No question detected in this frame.",
   error: "Something went wrong. See message below.",
@@ -15,12 +16,23 @@ export default function StatusBar({
   state,
   errorMessage,
   cameraError,
+  ocrProgress,
 }: {
   state: ScanState;
   errorMessage: string | null;
   cameraError: string | null;
+  ocrProgress?: number | null;
 }) {
-  const message = cameraError ? `Camera error: ${cameraError}` : errorMessage && state === "error" ? errorMessage : MESSAGES[state];
+  const readingMessage =
+    state === "reading" && ocrProgress !== null && ocrProgress !== undefined
+      ? `Reading the text in the image... ${Math.round(ocrProgress * 100)}%`
+      : null;
+
+  const message = cameraError
+    ? `Camera error: ${cameraError}`
+    : errorMessage && state === "error"
+    ? errorMessage
+    : readingMessage || MESSAGES[state];
   const isError = Boolean(cameraError) || state === "error";
 
   return (

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { analyzeFrame } from "../api/client";
+import { analyzeText } from "../api/client";
+import { recognize } from "../services/ocr";
 import {
   captureFrameAsDataUrl,
   FRAME_CHANGE_THRESHOLD,
@@ -14,8 +15,9 @@ import { AnalyzeResponseBody } from "../types";
 export type ScanState =
   | "idle" // camera not active / not scanning
   | "watching" // camera active, waiting for a sharp frame
-  | "detected" // a question shape was seen, sending to backend
-  | "processing" // waiting on backend analysis
+  | "detected" // a sharp frame was captured, about to read it
+  | "reading" // running OCR in the browser
+  | "processing" // waiting on backend search + answer
   | "answered" // got a full ok result
   | "needs_reposition" // backend asked for a clearer frame
   | "no_question" // backend found nothing question-like
@@ -40,6 +42,7 @@ export function useScanner(videoRef: React.RefObject<HTMLVideoElement>, cameraAc
   const [result, setResult] = useState<AnalyzeResponseBody | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [lastCapturedAt, setLastCapturedAt] = useState<number | null>(null);
+  const [ocrProgress, setOcrProgress] = useState<number | null>(null);
 
   if (!canvasRef.current && typeof document !== "undefined") {
     canvasRef.current = document.createElement("canvas");
@@ -80,8 +83,15 @@ export function useScanner(videoRef: React.RefObject<HTMLVideoElement>, cameraAc
       try {
         const dataUrl = captureFrameAsDataUrl(video, canvas);
         setLastCapturedAt(Date.now());
+
+        setScanState("reading");
+        const ocr = await recognize(dataUrl, (status, progress) => {
+          if (status === "recognizing text") setOcrProgress(progress);
+        });
+        setOcrProgress(null);
+
         setScanState("processing");
-        const response = await analyzeFrame(dataUrl);
+        const response = await analyzeText(ocr.text, ocr.confidence);
         setResult(response);
         setErrorMessage(null);
 
@@ -92,6 +102,7 @@ export function useScanner(videoRef: React.RefObject<HTMLVideoElement>, cameraAc
       } catch (err) {
         setErrorMessage(err instanceof Error ? err.message : "Analysis failed.");
         setScanState("error");
+        setOcrProgress(null);
       } finally {
         inFlightRef.current = false;
       }
@@ -149,6 +160,7 @@ export function useScanner(videoRef: React.RefObject<HTMLVideoElement>, cameraAc
     result,
     errorMessage,
     lastCapturedAt,
+    ocrProgress,
     reset,
   };
 }

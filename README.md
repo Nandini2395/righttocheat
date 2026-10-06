@@ -1,29 +1,44 @@
-# AI Visual Question Answering
+# Visual Question Answering (search-based)
 
-Point a device camera at a question — a worksheet, textbook page, exam, or slide — and get
-a verified answer. The app continuously watches the camera feed, extracts the question with
-a vision model, generates an answer, and cross-checks that answer against live Google search
-results before showing it to you.
+Point a device camera at a question — a worksheet, textbook page, exam, or slide — and get an
+answer backed by web sources. The app reads the question with on-device OCR, searches the web for
+it, and picks an answer from the evidence it finds.
+
+**It uses no AI model and needs no API key to run.**
 
 ```
-Camera → Frame Capture → Vision/OCR Extraction → Question Classification
-       → Answer Generation → Web Search → Source Verification → Final Answer
+Camera → Frame Capture → OCR (in browser) → Question Parsing → Web Search
+       → Evidence Scoring → Answer + Sources
 ```
 
 ## Stack
 
 - **Frontend**: React 18 + TypeScript + Vite + Tailwind CSS. Camera via `MediaDevices`/`getUserMedia`.
-- **Backend**: Node.js + Express + TypeScript.
-- **Vision/OCR + reasoning**: configurable LLM provider — Google Gemini (default, free tier, no credit
-  card required), Anthropic Claude, or OpenAI, all called with vision input so a single model pass
-  handles OCR, question extraction, classification, and (in a second call) answer generation and
-  verification reasoning.
-- **Search verification**: Google Programmable Search (Custom Search JSON API).
+- **OCR**: [Tesseract.js](https://tesseract.projectnaptha.com/) running **in the browser** — no API key,
+  no quota, no image upload. Only the recognized text is sent to the server.
+- **Backend**: Node.js + Express + TypeScript. No LLM.
+- **Search**: Google Programmable Search when `GOOGLE_SEARCH_API_KEY` is set, otherwise keyless
+  sources (DuckDuckGo + Wikipedia) so the app works with zero configuration.
+- **Answering**: deterministic heuristics — a local math solver, encyclopedia lookups per
+  multiple-choice option, and keyword/phrase scoring over search results.
 - **History storage**: a zero-config JSON file store (`backend/data/history.json`) by default; see
   [Swapping in PostgreSQL](#swapping-in-postgresql) to use a real database instead.
 
-All API keys live only in `backend/.env` and are never sent to the browser — the frontend only ever
-talks to your own backend.
+## What it can and can't do
+
+Because there is no language model, there is **no reasoning step**. Answers come from matching text
+against sources, so quality varies sharply by question type:
+
+| Works well | Unreliable |
+| --- | --- |
+| Arithmetic and simple linear equations (solved exactly, locally) | Word problems and multi-step reasoning |
+| Factual multiple choice with distinctive wording ("Which planet is the Red Planet?") | Questions whose options are phrased abstractly |
+| Definitions and general-knowledge lookups | "Which statement is correct?" style questions |
+
+The UI is deliberately blunt about this: every answer carries a **Verified / Likely Correct /
+Needs Review** badge and an evidence-based confidence score, and the explanation states plainly that
+the result is text matching rather than reasoning. Treat it as a fast way to find sources, not as an
+oracle.
 
 ## Project layout
 
@@ -37,24 +52,25 @@ backend/                Express API (deploys as the "backend" service)
     routes/analyze.ts     POST /api/analyze — the full pipeline
     routes/history.ts     GET/DELETE /api/history
     services/
-      visionService.ts        Frame -> structured question (OCR + extraction + classification)
-      answerService.ts        Question -> answer + explanation + calc steps
-      searchService.ts        Google Custom Search wrapper, authoritative-domain scoring
-      verificationService.ts  Builds a search query, reasons over results -> verification status
+      questionParser.ts       OCR text -> question stem, options, type, math expression
+      mathSolver.ts           Tokenizer + shunting-yard evaluator and linear-equation solver
+      searchProviders.ts      Google / DuckDuckGo / Wikipedia lookups behind one interface
+      answerDeriver.ts        Scores evidence -> answer, confidence, verification status
+      searchService.ts        Authoritative-domain list used to weight sources
       historyStore.ts         JSON-file backed history persistence
-      llmProvider.ts          Anthropic/OpenAI wire-format abstraction
 frontend/               React app
   src/
+    services/ocr.ts           Tesseract.js worker (in-browser OCR, reused across captures)
     hooks/useCamera.ts        getUserMedia lifecycle, start/stop/flip
     hooks/useScanner.ts       Auto-scan loop, manual capture, pause/resume, state machine
-    utils/imageUtils.ts       Frame capture + client-side blur/sharpness heuristic
+    utils/imageUtils.ts       Frame capture + blur and frame-change heuristics
     components/
       CameraView.tsx          Live preview + detection indicator overlay
       Controls.tsx             Start/Stop/Flip/Capture/Pause/Auto-scan controls
       ResultsPanel.tsx         Detected question, answer, explanation, verification, sources
       HistoryPanel.tsx         Slide-over history list with clear
-      SetupBanner.tsx          Flags a missing API key / unreachable backend up front
-      StatusBar.tsx             Bottom status line
+      SetupBanner.tsx          Flags an unreachable backend / keyless search mode
+      StatusBar.tsx             Bottom status line, incl. OCR progress
     api/client.ts              Typed fetch wrapper around the backend API
 ```
 
@@ -63,10 +79,7 @@ frontend/               React app
 ### Prerequisites
 
 - Node.js 18+
-- A free Google Gemini API key ([aistudio.google.com/apikey](https://aistudio.google.com/apikey) — no
-  credit card required, ~2 minutes) **or** an Anthropic/OpenAI key if you already have one
-- A Google Programmable Search Engine + API key (optional but required for Google cross-verification —
-  see below)
+- No API keys. (Optionally, a Google Programmable Search key for better results — see below.)
 
 ### 1. Install dependencies
 
@@ -76,24 +89,17 @@ From the repo root (this is an npm workspaces monorepo):
 npm install
 ```
 
-### 2. Configure the backend
+### 2. Configure the backend (optional)
+
+The app runs with no configuration. To change defaults or enable Google search:
 
 ```bash
 cp backend/.env.example backend/.env
 ```
 
-Edit `backend/.env`:
-
-- `LLM_PROVIDER` — `google` (default, free tier), `anthropic`, or `openai`.
-- `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` — set the one matching your provider. For
-  the default `google` provider, grab a free key at <https://aistudio.google.com/apikey> (sign in with
-  any Google account, no billing setup needed) and paste it in as `GEMINI_API_KEY`.
-- `GOOGLE_SEARCH_API_KEY` + `GOOGLE_SEARCH_ENGINE_ID` — for Google cross-verification. Without these,
-  the app still works but skips web verification and reports `Likely Correct` based on model reasoning
-  alone, with a note in the UI that search wasn't available. (This is separate from `GEMINI_API_KEY` —
-  it's the Programmable Search product, not the Gemini model API.)
-
-To set up Google Programmable Search:
+`GOOGLE_SEARCH_API_KEY` + `GOOGLE_SEARCH_ENGINE_ID` switch search from the keyless sources
+(DuckDuckGo + Wikipedia) to Google Programmable Search, which returns noticeably better results and
+is free for 100 queries/day. To set it up:
 
 1. Create a search engine at <https://programmablesearchengine.google.com/> — set it to "Search the
    entire web" for best results.
@@ -107,6 +113,10 @@ Nothing to do — the frontend calls `/api/...` on its own origin, and Vite's de
 `/api` to the backend on port 8787. Only set `VITE_API_BASE_URL` (see
 [`frontend/.env.example`](frontend/.env.example)) if you host the backend on a *different* origin
 than the frontend.
+
+> The first capture downloads the Tesseract OCR engine and English language data (~15MB) into the
+> browser cache. That one-time download is why the first scan is slower than later ones; after it,
+> OCR takes roughly 1–3 seconds per frame and works offline.
 
 ### 4. Run it
 
@@ -161,19 +171,13 @@ that's correct, keep it. Leave **Root Directory** as `./` and don't use the "Imp
 buttons next to the individual folders: those would deploy only one half (a frontend-only deploy
 returns 404s for every `/api` call). `vercel.json` already declares both services and their routing.
 
-### 3. Add your API key as an environment variable
+### 3. Environment variables (optional)
 
-In the import screen (or later under **Settings → Environment Variables**) add:
+There is nothing you have to set — the app deploys and runs as-is.
 
-| Name | Value |
-| --- | --- |
-| `GEMINI_API_KEY` | your key from [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
-
-Optional: `GOOGLE_SEARCH_API_KEY` + `GOOGLE_SEARCH_ENGINE_ID` to enable search cross-verification,
-and `LLM_PROVIDER`/`GEMINI_VISION_MODEL` to switch provider or model without a code change.
-
-These stay server-side — they're only ever read by the backend service, never shipped to the
-browser. **Do not** prefix them with `VITE_`, which would expose them publicly.
+If you want better search results, add `GOOGLE_SEARCH_API_KEY` and `GOOGLE_SEARCH_ENGINE_ID` under
+**Settings → Environment Variables**. These stay server-side, read only by the backend service.
+**Do not** prefix them with `VITE_`, which would expose them publicly in the browser bundle.
 
 ### 4. Deploy, then make it reachable
 
@@ -201,51 +205,48 @@ Camera; on iOS: Settings → Safari → Camera.
 1. **Camera** — `useCamera` requests `getUserMedia`, renders the stream into a `<video>`, and exposes
    start/stop/flip controls.
 2. **Scanning loop** — `useScanner` auto-captures a frame every 3s (toggleable), or on manual
-   **Capture / Analyze**. Before sending anything, it runs a cheap client-side sharpness check
-   (variance of a Laplacian edge filter on a downsampled frame) so obviously blurry/out-of-focus
-   frames never hit the backend. It also compares each frame against the last one actually sent
-   (mean grayscale pixel difference) and skips auto-scanning again if the camera is still pointed
-   at the same question — only a manual **Capture / Analyze** forces a re-send regardless. This is
-   what keeps a held-still phone from silently re-spending LLM quota every 3 seconds on a question
-   you're just reading the answer to.
-3. **POST /api/analyze** — the backend runs the pipeline server-side, deliberately kept to **two**
-   LLM calls total (a naive design would need four — extraction, answering, search-query-building,
-   verification — which burns through free-tier quotas fast):
-   - `visionService` sends the frame to the vision LLM with an extraction prompt, asking it to decide
-     whether a question is visible **and complete**, extract text/options/equations/tables/diagram
-     descriptions, classify the question type, and self-report an OCR confidence score (LLM call #1).
-     If the model reports the question is missing, incomplete, or below `MIN_OCR_CONFIDENCE`, the
-     backend returns a `needs_clearer_image` status with a repositioning hint instead of guessing.
-   - `verificationService` builds a search query with a plain string heuristic (no LLM call — it just
-     strips instructional boilerplate like "choose the correct answer") and calls Google Custom Search.
-   - `answerService` makes one combined LLM call (#2) that answers the question independently first
-     (showing calculation steps for numerical questions, naming the selected option for MCQs), then
-     reasons over the retrieved search snippets in the same pass to decide `verified` /
-     `likely_correct` / `needs_review`, flag disagreements, and select which sources were actually used.
-   - `llmProvider` retries once on a transient 429/500/502/503/504 from the LLM API before giving up,
-     since free tiers occasionally return a momentary "overloaded" error.
-   - The result (question, answer, explanation, verification, sources) is saved to history and
-     returned to the frontend.
-4. **Results panel** shows the detected question (with options/tables/diagram notes), the answer,
-   explanation, a verification badge with an evidence-based confidence bar, and clickable sources
-   that open in a new tab.
-5. **History** — a slide-over panel lists past answered questions with timestamp, verification status,
+   **Capture / Analyze**. Before doing any work it runs a cheap sharpness check (variance of a
+   Laplacian edge filter on a downsampled frame) so blurry/out-of-focus frames are skipped. It also
+   compares each frame against the last one processed (mean grayscale pixel difference) and skips
+   re-processing if the camera is still pointed at the same question — only a manual
+   **Capture / Analyze** forces a re-run.
+3. **OCR in the browser** — `services/ocr.ts` runs Tesseract.js on the captured frame and reports
+   both the text and a 0–1 confidence. The worker is created once and reused across captures. The
+   image never leaves the device; only the recognized text is posted to the API.
+4. **POST /api/analyze** — takes `{ text, ocrConfidence }` and runs entirely deterministic logic:
+   - `questionParser` splits the OCR text into a question stem and options (handling both one-per-line
+     and inline `A) ... B) ...` layouts), classifies the question type, and detects a math expression.
+   - If OCR confidence is below `MIN_OCR_CONFIDENCE`, it returns `needs_clearer_image` instead of
+     guessing from garbled text.
+   - `mathSolver` evaluates arithmetic and simple linear equations exactly, using an explicit
+     tokenizer and shunting-yard parser — deliberately **not** `eval`, since the input is arbitrary
+     text read off a photo.
+   - `searchProviders` queries the question stem only (including the options would bias results
+     toward whichever option shares wording with the question), via Google if configured and
+     DuckDuckGo + Wikipedia otherwise.
+   - `answerDeriver` scores the evidence. For multiple choice it fetches **each option's own
+     encyclopedia article** and measures how well that article matches the question's distinctive
+     phrases — asking "does Mars's article mention 'red planet'?" is far more reliable than counting
+     which option appears most in generic snippets, since any article about planets mentions all of
+     them. Snippet matching from the question search is folded in as a weaker tiebreaker.
+   - The result is saved to history and returned.
+5. **Results panel** shows the detected question and options, the answer, an explanation stating how
+   it was derived, a verification badge with an evidence-based confidence bar, and clickable sources.
+6. **History** — a slide-over panel lists past answered questions with timestamp, verification status,
    and sources; **Clear** wipes it.
 
 ## Accuracy safeguards
 
-- The vision model must report `hasQuestion` **and** `isComplete` **and** `ocrConfidence` above
-  `MIN_OCR_CONFIDENCE` (default 0.55) before an answer is attempted — otherwise the UI asks the user
-  to reposition the camera.
-- A client-side blur heuristic pre-filters frames before they're even sent, saving API calls on
-  unusable frames.
-- Numerical/mathematical answers are generated with explicit step-by-step reasoning *before* search
-  verification runs, so the search step checks the model's independent work rather than anchoring on
-  search results.
-- Verification is evidence-based: the confidence shown is the verifier's assessment of source
-  agreement/authority, not the answer model's own self-confidence.
-- The verifier is instructed to never fabricate sources — `usedSources` only ever contains URLs that
-  actually came back from the Google Search API response.
+- OCR confidence below `MIN_OCR_CONFIDENCE` (default 0.55) returns a "reposition the camera" prompt
+  rather than an answer derived from garbled text.
+- A blur heuristic skips unusable frames before OCR even runs.
+- Arithmetic is computed locally rather than looked up, which is both exact and immune to bad search
+  results.
+- Confidence is evidence-based, derived from the *margin* between the best and second-best option and
+  whether a distinctive phrase actually matched — not from a model's self-assessment. A near-tie is
+  reported as `needs_review` with an explicit note that the pick is a coin flip.
+- Sources are never fabricated: every URL shown came back from a real search or encyclopedia response.
+- Explanations state plainly that the answer is text matching rather than reasoning.
 
 ## Swapping in PostgreSQL
 
@@ -260,31 +261,23 @@ History currently persists to `backend/data/history.json` via `backend/src/servi
 
 ## Troubleshooting
 
-- **"GEMINI_API_KEY is not set" / "ANTHROPIC_API_KEY is not set"** — add the key matching your
-  `LLM_PROVIDER` to `backend/.env` and restart the backend. For the default `google` provider, get a
-  free key at <https://aistudio.google.com/apikey>.
-- **"LLM request timed out after 20000ms"** — the provider accepted the request but never responded.
-  Gemini's vision endpoint has been observed stalling on image requests (while text-only requests
-  still return in under a second) and returning HTTP 503 "experiencing high demand" on others — i.e.
-  a provider-side problem, not a bug in this app. Try again later, or point `GEMINI_VISION_MODEL` at
-  a different model via env var (no code change needed). Tune the deadline with `LLM_TIMEOUT_MS`.
-- **Gemini free-tier rate limit / quota errors (HTTP 429 "RESOURCE_EXHAUSTED")** — model choice matters
-  a lot here: flagship "flash" models can have free-tier quotas as low as ~20 requests/**day**, while
-  the default `gemini-flash-lite-latest` gets a far more generous quota for the same free key (which is
-  why it's the default `GEMINI_VISION_MODEL`/`GEMINI_TEXT_MODEL` — don't swap to a non-"lite" model
-  unless you're on a paid plan). If you still hit limits, slow down auto-scanning
-  (`AUTO_SCAN_INTERVAL_MS` in `frontend/src/hooks/useScanner.ts`) or wait for the quota to reset. Check
-  your key's actual limits at <https://ai.google.dev/gemini-api/docs/rate-limits>.
-- **Verification always shows "Likely Correct" / "search API not configured"** — set
-  `GOOGLE_SEARCH_API_KEY` and `GOOGLE_SEARCH_ENGINE_ID` in `backend/.env`.
+- **First scan is slow / seems stuck at "Reading the text…"** — the first capture downloads the
+  Tesseract engine and English data (~15MB). It's cached afterwards; later scans take 1–3 seconds.
+- **"Couldn't determine an answer"** — search found nothing that matches well enough. This is common
+  with the keyless sources on exam-style questions; adding `GOOGLE_SEARCH_API_KEY` and
+  `GOOGLE_SEARCH_ENGINE_ID` improves it a lot.
+- **Answers are wrong on reasoning questions** — expected, and not fixable by configuration. There is
+  no language model here, so nothing reasons about the question; see
+  [What it can and can't do](#what-it-can-and-cant-do). The confidence badge is the thing to watch:
+  `needs_review` genuinely means "don't trust this".
+- **OCR misreads the question** — improve the input rather than the software: fill the frame with just
+  the question, avoid glare and shadows, hold steady, and prefer flat pages over curved ones. Tesseract
+  is far more sensitive to image quality than a vision model would be.
 - **Camera won't start** — check the browser's site permissions, and confirm you're on `localhost`
   or HTTPS (see note above).
 - **Rate limit errors during heavy auto-scanning** — the backend caps `/api/analyze` at 20 requests/min
-  per client by default (`backend/src/index.ts`); lower the auto-scan frequency in
-  `frontend/src/hooks/useScanner.ts` (`AUTO_SCAN_INTERVAL_MS`) or raise the limit if you have quota.
-- **"Origin ... is not allowed by CORS_ORIGIN" / requests fail silently after deploying** — the
-  backend's `CORS_ORIGIN` env var must exactly match your Pages URL's origin (scheme + host, e.g.
-  `https://your-username.github.io`, no path/trailing slash); it accepts a comma-separated list if you
-  need to allow both your local dev origin and the deployed one.
-- **First request after opening the deployed site takes ~30–60s** — expected on Render's free tier;
-  the backend was asleep and is cold-starting. Subsequent requests are fast until it sleeps again.
+  per client by default (`backend/src/app.ts`); lower the auto-scan frequency in
+  `frontend/src/hooks/useScanner.ts` (`AUTO_SCAN_INTERVAL_MS`) or raise the limit.
+- **"Origin ... is not allowed by CORS_ORIGIN" / requests fail after deploying** — only relevant when
+  the frontend and API are on different domains. Set `CORS_ORIGIN` to the frontend's origin (scheme +
+  host, no trailing slash); it accepts a comma-separated list. Same-origin deploys need nothing.
