@@ -67,9 +67,15 @@ export function frameDifference(a: FrameSample, b: FrameSample): number {
   return diff / a.gray.length;
 }
 
+// Downscaling the captured frame keeps the base64 payload well under Vercel's 4.5MB
+// serverless request limit and cuts vision-model token usage, with no meaningful loss of
+// legibility for printed text at this width.
+const MAX_CAPTURE_WIDTH = 1600;
+
 export function captureFrameAsDataUrl(video: HTMLVideoElement, canvas: HTMLCanvasElement, quality = 0.85): string {
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
+  const scale = Math.min(1, MAX_CAPTURE_WIDTH / video.videoWidth);
+  canvas.width = Math.round(video.videoWidth * scale);
+  canvas.height = Math.round(video.videoHeight * scale);
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Canvas 2D context unavailable");
   ctx.drawImage(video, 0, 0, canvas.width, canvas.height);

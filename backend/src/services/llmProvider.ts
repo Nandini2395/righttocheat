@@ -1,4 +1,4 @@
-import fetch from "node-fetch";
+import fetch, { RequestInit, Response } from "node-fetch";
 import { config } from "../config";
 
 export interface LlmMessage {
@@ -6,6 +6,27 @@ export interface LlmMessage {
   text: string;
   imageBase64?: string; // raw base64, no data: prefix
   imageMediaType?: string; // e.g. image/jpeg
+}
+
+/**
+ * Provider APIs can stall indefinitely rather than returning an error — Gemini's vision
+ * endpoint in particular has been observed accepting a request with an image and never
+ * responding. Without a deadline that becomes an endless spinner in the UI and, on
+ * serverless, a function that burns its whole duration budget before being killed.
+ */
+async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), config.llmTimeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal as any });
+  } catch (err) {
+    if (controller.signal.aborted) {
+      throw new Error(`LLM request timed out after ${config.llmTimeoutMs}ms (timeout)`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
@@ -31,8 +52,10 @@ export async function callLlmForJson(params: {
   return extractJson(raw);
 }
 
-// Free-tier providers (Gemini especially) occasionally return 429/503 under load —
-// one short retry smooths that over instead of surfacing it as a hard scan failure.
+// Free-tier providers (Gemini especially) occasionally return 429/503 under load — one short
+// retry smooths that over instead of surfacing it as a hard scan failure. Timeouts are
+// deliberately NOT retried: they already cost a full deadline, and retrying one would let a
+// two-call pipeline exceed the serverless function's duration budget.
 async function withRetryOnTransientError<T>(fn: () => Promise<T>, retries = 1, delayMs = 1200): Promise<T> {
   try {
     return await fn();
@@ -67,7 +90,7 @@ async function callAnthropic(params: {
   }
   content.push({ type: "text", text: params.userText });
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+  const res = await fetchWithTimeout("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -110,7 +133,7 @@ async function callOpenAi(params: {
     });
   }
 
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+  const res = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -156,7 +179,7 @@ async function callGemini(params: {
     });
   }
 
-  const res = await fetch(
+  const res = await fetchWithTimeout(
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${config.google.apiKey}`,
     {
       method: "POST",

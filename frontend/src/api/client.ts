@@ -1,6 +1,10 @@
 import { AnalyzeResponseBody, HistoryEntry } from "../types";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
+// Empty default = same-origin relative calls ("/api/..."), which is what a single-project
+// Vercel deploy needs (frontend and serverless API share one domain). In local dev the Vite
+// proxy forwards /api to the backend port. Set VITE_API_BASE_URL only when the backend is
+// hosted on a different origin than the frontend.
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
 
 async function handleJson<T>(res: Response): Promise<T> {
   if (!res.ok) {

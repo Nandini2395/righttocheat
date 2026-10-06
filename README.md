@@ -28,9 +28,12 @@ talks to your own backend.
 ## Project layout
 
 ```
+api/
+  index.ts              Vercel serverless entrypoint (exports the Express app)
 backend/                Express API
   src/
-    index.ts            App entry, routes, rate limiting
+    app.ts              Builds the Express app (shared by local server + Vercel function)
+    index.ts            Local dev server — binds a port and starts app.ts
     config.ts            Env var loading/validation
     routes/analyze.ts     POST /api/analyze — the full pipeline
     routes/history.ts     GET/DELETE /api/history
@@ -100,11 +103,10 @@ To set up Google Programmable Search:
 
 ### 3. Configure the frontend
 
-```bash
-cp frontend/.env.example frontend/.env
-```
-
-Default (`VITE_API_BASE_URL=http://localhost:8787`) works out of the box for local dev.
+Nothing to do — the frontend calls `/api/...` on its own origin, and Vite's dev server proxies
+`/api` to the backend on port 8787. Only set `VITE_API_BASE_URL` (see
+[`frontend/.env.example`](frontend/.env.example)) if you host the backend on a *different* origin
+than the frontend.
 
 ### 4. Run it
 
@@ -122,49 +124,65 @@ question.
 > frontend from another device on your network (e.g. testing on a phone), you'll need HTTPS or a
 > tunnel (e.g. `ngrok`), since browsers block camera access on plain `http://` for non-localhost hosts.
 
-## Deploying to GitHub Pages (for use on your phone)
+## Deploying to Vercel (and using it on your phone)
 
-GitHub Pages only serves static files — it can't run the Express backend or hold your API keys — so
-the two halves deploy separately: **frontend → GitHub Pages**, **backend → a small Node host**. Both
-end up on HTTPS automatically, which is what mobile browsers require before they'll grant camera
-access. `frontend/vite.config.ts` already sets `base: "./"` so the build works from a GitHub Pages
-project-page subpath (`https://<user>.github.io/<repo>/`), and `.github/workflows/deploy-pages.yml`
-builds and publishes it on every push to `main`.
+The whole app deploys as **one Vercel project**: the Vite frontend as static files, and the same
+Express app as a serverless function at `/api`. Because both live on one domain, there's no CORS
+setup and no API URL to configure — the frontend just calls `/api/...` on its own origin. Vercel
+serves it over HTTPS, which is what mobile browsers require before granting camera access.
 
-### 1. Deploy the backend first (you'll need its URL for the frontend build)
+How the pieces map:
 
-The included [`render.yaml`](render.yaml) is a ready-to-use [Render](https://render.com) Blueprint
-(Render has a free tier; any Node host — Railway, Fly.io, a VPS — works the same way):
+| File | Role |
+| --- | --- |
+| [`vercel.json`](vercel.json) | Build command, output dir (`frontend/dist`), and 60s function timeout |
+| [`api/index.ts`](api/index.ts) | Serverless entrypoint — exports the Express app from `backend/src/app.ts` |
+| [`backend/src/app.ts`](backend/src/app.ts) | Builds the app without binding a port (shared by local dev and Vercel) |
 
-1. Push this repo to GitHub (see step 3 below if you haven't yet).
-2. On Render: **New → Blueprint**, point it at your repo. It reads `render.yaml` and creates a
-   `vqa-backend` web service with `rootDir: backend`.
-3. In the Render dashboard, fill in the secret env vars `render.yaml` left blank: `ANTHROPIC_API_KEY`
-   (or `OPENAI_API_KEY`), `GOOGLE_SEARCH_API_KEY`, `GOOGLE_SEARCH_ENGINE_ID`, and `CORS_ORIGIN` — set
-   `CORS_ORIGIN` to your future Pages URL, e.g. `https://your-username.github.io`.
-4. Deploy, then copy the resulting URL (e.g. `https://vqa-backend.onrender.com`).
+### 1. Push the repo to GitHub
 
-> Free-tier Render services sleep after inactivity (~30–60s cold start on the next request) and use
-> an ephemeral disk, so `backend/data/history.json` resets on redeploy/restart — fine for a prototype,
-> see [Swapping in PostgreSQL](#swapping-in-postgresql) if you need persistent history.
+Vercel deploys from a Git repo. Make sure your latest commit is pushed.
 
-### 2. Point the frontend build at it
+### 2. Import the project on Vercel
 
-In your GitHub repo: **Settings → Secrets and variables → Actions → Variables → New repository
-variable**, name `VITE_API_BASE_URL`, value your backend URL from step 1 (no trailing slash).
+[vercel.com/new](https://vercel.com/new) → **Import** your repository. Leave every build setting at
+its default — `vercel.json` already specifies them. Don't set a Root Directory; it must stay at the
+repo root so the `api/` folder is detected.
 
-### 3. Turn on GitHub Pages
+### 3. Add your API key as an environment variable
 
-**Settings → Pages → Build and deployment → Source: "GitHub Actions"**. Push (or re-push) to `main` —
-`.github/workflows/deploy-pages.yml` builds `frontend/` with that `VITE_API_BASE_URL` baked in and
-publishes `frontend/dist` to Pages. Watch progress under the repo's **Actions** tab; the deployed URL
-also shows up there and under **Settings → Pages**.
+In the import screen (or later under **Settings → Environment Variables**) add:
 
-### 4. Use it on your phone
+| Name | Value |
+| --- | --- |
+| `GEMINI_API_KEY` | your key from [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
 
-Open the `https://<user>.github.io/<repo>/` URL on your phone's browser, tap **Start Camera**, allow
-the permission prompt, and point it at a question. If the camera doesn't start, double-check you're
-on the `https://` Pages URL (not a local IP) and that the site permission wasn't previously denied.
+Optional: `GOOGLE_SEARCH_API_KEY` + `GOOGLE_SEARCH_ENGINE_ID` to enable search cross-verification,
+and `LLM_PROVIDER`/`GEMINI_VISION_MODEL` to switch provider or model without a code change.
+
+These stay server-side — they're only ever read by the serverless function, never shipped to the
+browser. **Do not** prefix them with `VITE_`, which would expose them publicly.
+
+### 4. Deploy, then make it reachable
+
+Hit **Deploy**. When it finishes, check **Settings → Deployment Protection**: if Vercel
+Authentication is enabled, anyone opening the link (including you on your phone) hits a Vercel login
+wall first. Set it to **Disabled** for a personal demo.
+
+### 5. Open it on your phone
+
+Open the deployment URL (`https://<project>.vercel.app`) in Chrome or Safari, tap **Start Camera**,
+tap **Allow**, and point it at a question. Use the rear camera via **Flip** if it starts on the
+selfie camera.
+
+If the camera won't start, confirm you're on the `https://` URL (not an IP address) and that you
+didn't previously deny the camera permission for that site — on Android: Chrome → ⋮ → Site settings →
+Camera; on iOS: Settings → Safari → Camera.
+
+> **Note on history:** Vercel's filesystem is read-only apart from a temporary directory, so the
+> JSON-file history store is best-effort there and resets between invocations. Answering is
+> unaffected (history failures are swallowed). See
+> [Swapping in PostgreSQL](#swapping-in-postgresql) for history that actually persists.
 
 ## How it works
 
@@ -233,6 +251,11 @@ History currently persists to `backend/data/history.json` via `backend/src/servi
 - **"GEMINI_API_KEY is not set" / "ANTHROPIC_API_KEY is not set"** — add the key matching your
   `LLM_PROVIDER` to `backend/.env` and restart the backend. For the default `google` provider, get a
   free key at <https://aistudio.google.com/apikey>.
+- **"LLM request timed out after 20000ms"** — the provider accepted the request but never responded.
+  Gemini's vision endpoint has been observed stalling on image requests (while text-only requests
+  still return in under a second) and returning HTTP 503 "experiencing high demand" on others — i.e.
+  a provider-side problem, not a bug in this app. Try again later, or point `GEMINI_VISION_MODEL` at
+  a different model via env var (no code change needed). Tune the deadline with `LLM_TIMEOUT_MS`.
 - **Gemini free-tier rate limit / quota errors (HTTP 429 "RESOURCE_EXHAUSTED")** — model choice matters
   a lot here: flagship "flash" models can have free-tier quotas as low as ~20 requests/**day**, while
   the default `gemini-flash-lite-latest` gets a far more generous quota for the same free key (which is

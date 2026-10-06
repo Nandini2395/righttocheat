@@ -9,5 +9,10 @@ export default defineConfig({
   server: {
     port: 5173,
     host: true,
+    // Lets the app use same-origin "/api/..." paths in dev exactly as it does on Vercel,
+    // so no environment-specific API URL is needed in either place.
+    proxy: {
+      "/api": "http://localhost:8787",
+    },
   },
 });

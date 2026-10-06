@@ -51,6 +51,10 @@ export const config = {
   databaseUrl: process.env.DATABASE_URL || "",
 
   minOcrConfidence: Number(process.env.MIN_OCR_CONFIDENCE || 0.55),
+
+  // Per-LLM-call deadline. The pipeline makes two calls, so keep this comfortably under
+  // the serverless function's maxDuration (60s in vercel.json) to leave room for both.
+  llmTimeoutMs: Number(process.env.LLM_TIMEOUT_MS || 20000),
 };
 
 export function assertLlmConfigured(): string | null {
